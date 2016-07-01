@@ -57,14 +57,6 @@ func (st *ContainersState) addUnknown(container types.Container) {
 	})
 }
 
-// addUnsupported adds a container that has an unsupported backend.
-func (st *ContainersState) addUnsupported(container types.Container, reason string) {
-	st.Ignored = append(st.Ignored, ContainerWithState{
-		Container: container,
-		Message:   fmt.Sprintf("container has no supported backend: %v", reason),
-	})
-}
-
 // ListContainers fetches all the running containers in the system. If there
 // are no running containers, then both returned values are nil. The `ignore`
 // parameter will tell this function whether or not to ignore failures when
@@ -109,12 +101,10 @@ func inspectContainers(containers []types.Container, ignore bool) (*ContainersSt
 				continue
 			}
 
-			if exists, suse := cache.idExists(imageID); exists && !suse {
-				state.addUnsupported(container, "only zypper is supported")
+			if exists, _ := cache.idExists(imageID); !exists {
+				state.addUnknown(container)
 			} else if cache.isImageOutdated(imageID) {
 				state.Updated = append(state.Updated, container)
-			} else {
-				state.addUnknown(container)
 			}
 		}
 	}

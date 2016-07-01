@@ -19,7 +19,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/SUSE/zypper-docker/backend/drivers"
 	"github.com/SUSE/zypper-docker/logger"
 	"github.com/SUSE/zypper-docker/utils"
 	"github.com/docker/distribution/reference"
@@ -146,7 +145,7 @@ func runCommandAndCommitToImage(img, targetRepo, targetTag, cmd, comment, author
 		switch err.(type) {
 		case dockerError:
 			de := err.(dockerError)
-			severe, err := drivers.Current().IsExitCodeSevere(de.exitCode)
+			severe, err := CurrentDriver(img).IsExitCodeSevere(de.exitCode)
 			if severe && err == nil {
 				return "", err
 			}

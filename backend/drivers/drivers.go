@@ -19,6 +19,16 @@ import (
 	"github.com/docker/engine-api/types/container"
 )
 
+// Available contains a slice of strings identifying the available drivers.
+var Available = []string{"apt", "zypper", "dnf"}
+
+// TODO: replace Available above with this
+var AvailableDrivers = map[string]Driver{
+	"apt":    &Apt{},
+	"dnf":    &Dnf{},
+	"zypper": &Zypper{},
+}
+
 // UpdateInfo contains all the information regarding updates so it can be
 // consumed later instead of being displayed right away.
 /*
@@ -41,6 +51,7 @@ type Driver interface {
 	NeedsCLI() bool
 	SeverityCommand() string
 	SeveritySupported(output string) bool
+	Available() string
 }
 
 // cliContext represents the context as given by the CLI.
@@ -75,10 +86,4 @@ func (err notSupportedError) Error() string {
 func IsNotSupported(err error) bool {
 	_, ok := err.(notSupportedError)
 	return ok
-}
-
-// Current returns the driver for the given docker image.
-// TODO: of course, we should do something clever about this :)
-func Current() Driver {
-	return &Zypper{}
 }

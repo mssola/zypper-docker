@@ -14,12 +14,6 @@
 
 package backend
 
-import (
-	"fmt"
-
-	"github.com/SUSE/zypper-docker/backend/drivers"
-)
-
 // UpdateKind represents the kind of update to be executed.
 type UpdateKind int
 
@@ -42,16 +36,16 @@ func uniqueUpdatedName(image string) (string, string, error) {
 	return repo, tag, nil
 }
 
-func fetchCommand(kind UpdateKind) (string, error) {
+func fetchCommand(image string, kind UpdateKind) (string, error) {
 	if kind == General {
-		return drivers.Current().GeneralUpdate()
+		return CurrentDriver(image).GeneralUpdate()
 	} else if kind == Security {
-		return drivers.Current().SecurityUpdate()
+		return CurrentDriver(image).SecurityUpdate()
 	}
 
 	// TODO: in the future this will be meant for those backends which
 	// don't support patching.
-	return drivers.Current().GeneralUpdate()
+	return CurrentDriver(image).GeneralUpdate()
 }
 
 // PerformUpdate performs an update operation to the given `original` image and
@@ -63,20 +57,24 @@ func PerformUpdate(kind UpdateKind, original, dest, comment, author string) (str
 		return "", "", err
 	}
 
-	cmd, err := fetchCommand(kind)
+	cmd, err := fetchCommand(original, kind)
 	if err != nil {
 		return "", "", err
 	}
 
-	newImgID, err := runCommandAndCommitToImage(original, repo, tag, cmd, comment, author)
+	// TODO: newImageID has to be used
+	_, err = runCommandAndCommitToImage(original, repo, tag, cmd, comment, author)
 	if err != nil {
 		return "", "", err
 	}
 
-	cache := getCacheFile()
-	if err := cache.updateCacheAfterUpdate(original, newImgID); err != nil {
-		return "", "", fmt.Errorf("failed to write to cache: %v", err)
-	}
+	// TODO
+	/*
+		cache := getCacheFile()
+		if err := cache.updateCacheAfterUpdate(original, newImgID); err != nil {
+			return "", "", fmt.Errorf("failed to write to cache: %v", err)
+		}
+	*/
 	return repo, tag, nil
 }
 
@@ -86,9 +84,9 @@ func ListUpdates(kind UpdateKind, image string, machine bool) error {
 	var err error
 
 	if kind == Security {
-		cmd, err = drivers.Current().ListSecurityUpdates(machine)
+		cmd, err = CurrentDriver(image).ListSecurityUpdates(machine)
 	} else {
-		cmd, err = drivers.Current().ListGeneralUpdates()
+		cmd, err = CurrentDriver(image).ListGeneralUpdates()
 	}
 	if err != nil {
 		return err
@@ -99,7 +97,7 @@ func ListUpdates(kind UpdateKind, image string, machine bool) error {
 // HasPatches returns true if the given image has pending patches.
 // TODO: improve with a "Severity" return value or something
 func HasPatches(image string) (bool, bool, error) {
-	cmd, err := drivers.Current().CheckPatches()
+	cmd, err := CurrentDriver(image).CheckPatches()
 	if err != nil {
 		return false, false, err
 	}
@@ -109,6 +107,7 @@ func HasPatches(image string) (bool, bool, error) {
 		return false, false, nil
 	}
 
+	// TODO: bullshit
 	switch err.(type) {
 	case dockerError:
 		// According to zypper's documentation:

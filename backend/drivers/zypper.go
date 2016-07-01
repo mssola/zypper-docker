@@ -96,6 +96,10 @@ func (*Zypper) NeedsCLI() bool {
 	return true
 }
 
+func (*Zypper) Available() string {
+	return "zypper"
+}
+
 // SeverityCommand TODO
 func (*Zypper) SeverityCommand() string {
 	return "zypper lp --severity"

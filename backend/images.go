@@ -35,6 +35,7 @@ func FetchImages(force bool) ([]types.Image, error) {
 }
 
 // PrintImages prints the given images as expected.
+// TODO: add column for the backend
 func PrintImages(images []types.Image) {
 	suseImages := make([]types.Image, 0, len(images))
 	cache := getCacheFile()
@@ -46,7 +47,7 @@ func PrintImages(images []types.Image) {
 			return
 		default:
 			fmt.Printf("Inspecting image %d/%d\r", (counter + 1), len(images))
-			if cache.isSUSE(img.ID) {
+			if supported, _ := cache.isSupported(img.ID); supported {
 				suseImages = append(suseImages, img)
 			}
 		}

@@ -27,6 +27,17 @@ import (
 	"testing"
 )
 
+func testSlice(t *testing.T, given, expected []string) {
+	if len(given) != len(expected) {
+		t.Fatalf("Wrong length: given %#v; expected %#v", given, expected)
+	}
+	for key, value := range given {
+		if value != expected[key] {
+			t.Fatalf("not the same: given %#v; expected %#v", given, expected)
+		}
+	}
+}
+
 // NOTE: some functions are already covered in other places of this test suite,
 // so there's no point to add more tests in this specific file.
 
@@ -82,7 +93,7 @@ func TestCachePathFail(t *testing.T) {
 	if cacheFile.Valid {
 		t.Fatal("Cache should not be valid")
 	}
-	if !strings.Contains(buffer.String(), "Could not find path for the cache!") {
+	if !strings.Contains(buffer.String(), "could not find path for the cache") {
 		t.Fatal("Wrong log")
 	}
 }
@@ -109,7 +120,7 @@ func TestCacheBadJson(t *testing.T) {
 	if !file.Valid {
 		t.Fatal("It should be valid")
 	}
-	if !strings.Contains(buffer.String(), "Decoding of cache file failed") {
+	if !strings.Contains(buffer.String(), "decoding of cache file failed") {
 		t.Fatal("Wrong log")
 	}
 }
@@ -139,23 +150,10 @@ func TestCacheGoodJson(t *testing.T) {
 		t.Fatal("Wrong path")
 	}
 
-	if len(file.Suse) != 2 {
-		t.Fatal("Wrong value for SUSE")
-	}
-	if len(file.Other) != 2 {
-		t.Fatal("Wrong value for Other")
-	}
-	if len(file.Outdated) != 0 {
-		t.Fatal("Wrong value for Outdated")
-	}
-
-	elements := append(file.Suse, file.Other...)
-	elements = append(elements, file.Outdated...)
-	for i, value := range elements {
-		if value != fmt.Sprintf("%v", i+1) {
-			t.Fatal("Wrong value")
-		}
-	}
+	testSlice(t, file.IDs["zypper"], []string{"1", "2"})
+	testSlice(t, file.IDs["dnf"], []string{"4"})
+	testSlice(t, file.IDs[otherKey], []string{"3", "5", "6"})
+	testSlice(t, file.Outdated, []string{})
 }
 
 func TestFlush(t *testing.T) {
@@ -164,15 +162,13 @@ func TestFlush(t *testing.T) {
 	path := filepath.Join(test, "testflush.json")
 
 	cd := &cachedData{
-		Path:     path,
-		Valid:    false,
-		Suse:     []string{},
-		Other:    []string{},
-		Outdated: []string{},
+		Path:  path,
+		Valid: false,
+		IDs:   make(map[string][]string),
 	}
 
 	// Now put some contents there.
-	expected := "{\"suse\": [\"1\"], \"other\": [], \"outdated\": []}"
+	expected := "{\"ids\":{\"dnf\":[\"1\"],\"others\":[],\"zypper\":[]},\"outdated\":[]}"
 	err := ioutil.WriteFile(path, []byte(expected), 0666)
 	if err != nil {
 		t.Fatal("Failed on writing a file")
@@ -193,7 +189,6 @@ func TestFlush(t *testing.T) {
 	// again.
 	cd.Valid = true
 	cd.flush()
-	expected = "{\"suse\":[\"1\"],\"other\":[],\"outdated\":[]}"
 	contents, err = ioutil.ReadFile(path)
 	if err != nil {
 		t.Fatal("Failed on reading a file")
@@ -211,7 +206,7 @@ func TestFlush(t *testing.T) {
 		t.Fatal("Could not remove temporary file")
 	}
 	cd.flush()
-	if !strings.Contains(buffer.String(), "Cannot write to the cache file") {
+	if !strings.Contains(buffer.String(), "cannot write to the cache file") {
 		t.Fatal("Didn't logged what it was expected")
 	}
 }
@@ -220,7 +215,7 @@ func TestUpdateCacheAfterUpdateFailsBecauseOfListError(t *testing.T) {
 	cache := cachedData{}
 
 	safeClient.client = &mockClient{listFail: true}
-	err := cache.updateCacheAfterUpdate("1", "2")
+	err := cache.updateCacheAfterUpdate("1", "2", "zypper")
 	if err == nil {
 		t.Fatal("Expected failure")
 	}
@@ -230,7 +225,7 @@ func TestUpdateCacheAfterUpdateFailsBecauseOfListEmpty(t *testing.T) {
 	cache := cachedData{}
 
 	safeClient.client = &mockClient{listEmpty: true}
-	err := cache.updateCacheAfterUpdate("1", "2")
+	err := cache.updateCacheAfterUpdate("1", "2", "zypper")
 	if err == nil {
 		t.Fatal("Expected failure")
 	}
@@ -239,17 +234,18 @@ func TestUpdateCacheAfterUpdateFailsBecauseOfListEmpty(t *testing.T) {
 func TestUpdateCacheAfterUpdateNothingDoneWhenTheImageIsAlreadyKnown(t *testing.T) {
 	cache := cachedData{
 		Outdated: []string{"35ae93c88cf8ab18da63bb2ad2dfd2399d745f292a344625fbb65892b7c25a01"},
-		Suse:     []string{"2"}}
+		IDs:      map[string][]string{"zypper": []string{"2"}},
+	}
 
 	safeClient.client = &mockClient{listEmpty: true}
-	err := cache.updateCacheAfterUpdate("opensuse:13.2", "2")
+	err := cache.updateCacheAfterUpdate("opensuse:13.2", "2", "zypper")
 	if err == nil {
 		t.Fatal("Expected failure")
 	}
 	if len(cache.Outdated) != 1 {
 		t.Fatal("Nothing should have changed")
 	}
-	if len(cache.Suse) != 1 {
+	if len(cache.IDs["zypper"]) != 1 {
 		t.Fatal("Nothing should have changed")
 	}
 }
@@ -257,25 +253,14 @@ func TestUpdateCacheAfterUpdateNothingDoneWhenTheImageIsAlreadyKnown(t *testing.
 func TestReadCacheSuccess(t *testing.T) {
 	cache := cachedData{}
 	expected := &cachedData{
-		Valid:    true,
-		Suse:     []string{"1"},
-		Other:    []string{"2"},
+		Valid: true,
+		IDs: map[string][]string{
+			"zypper": []string{"1"},
+			"others": []string{"2"},
+		},
 		Outdated: []string{"3"},
 	}
-	buffer := bytes.NewBufferString(`{"suse":["1"],"other":["2"],"outdated":["3"]}`)
-
-	got := cache.readCache(buffer)
-	if !reflect.DeepEqual(got, expected) {
-		t.Fatalf("Expected %v, got %v", expected, got)
-	}
-}
-
-func TestReadCacheFail(t *testing.T) {
-	cache := cachedData{}
-	expected := &cachedData{
-		Valid: true,
-	}
-	buffer := bytes.NewBufferString(`"suse":["1"],"other":["2"],"outdated":["3"]}`)
+	buffer := bytes.NewBufferString(`{"ids":{"zypper":["1"],"others":["2"]},"outdated":["3"]}`)
 
 	got := cache.readCache(buffer)
 	if !reflect.DeepEqual(got, expected) {

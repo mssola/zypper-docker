@@ -21,23 +21,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/SUSE/zypper-docker/backend/drivers"
 	"github.com/SUSE/zypper-docker/logger"
 	"github.com/SUSE/zypper-docker/utils"
 	"github.com/coreos/etcd/pkg/fileutil"
 )
 
-const cacheName = "docker-zypper.json"
+const (
+	cacheName = "zypper-docker.json"
+	otherKey  = "others"
+)
 
 // The representation of cached data for this application.
 type cachedData struct {
 	// The path to the original cache file.
 	Path string `json:"-"`
 
-	// Contains all the IDs that are known to be valid openSUSE/SLE images.
-	Suse []string `json:"suse"`
-
-	// Contains all the IDs that are known to be non-openSUSE/SLE images.
-	Other []string `json:"other"`
+	// Map containing the inspected images. It contains both images that can be
+	// handled, and images that can't. Images that can be handled are stored in
+	// their respective handler name (e.g. zypper), while unknown images
+	// will be stored inside of the `otherKey` key.
+	IDs map[string][]string `json:"ids"`
 
 	// Contains all the IDs of the images that have been either patched or
 	// upgraded or patched using zypper-docker
@@ -49,12 +53,15 @@ type cachedData struct {
 
 // Checks whether the given Id exists or not. It returns two booleans:
 //  - Whether it exists or not.
-//  - If it exists, whether it is a SUSE image or not.
-func (cd *cachedData) idExists(id string) (bool, bool) {
-	suse := utils.ArrayIncludeString(cd.Suse, id)
-	other := utils.ArrayIncludeString(cd.Other, id)
+//  - If it exists, the name of the driver being used.
+func (cd *cachedData) idExists(id string) (bool, string) {
+	for key, ids := range cd.IDs {
+		if utils.ArrayIncludeString(ids, id) {
+			return true, key
+		}
+	}
 
-	return suse || other, suse
+	return false, ""
 }
 
 // Returns whether the given ID matches an image that has been
@@ -63,23 +70,27 @@ func (cd *cachedData) isImageOutdated(id string) bool {
 	return utils.ArrayIncludeString(cd.Outdated, id)
 }
 
-// Returns whether the given ID matches an image that is based on SUSE.
-func (cd *cachedData) isSUSE(id string) bool {
+// Returns whether the given ID matches an image that is based on an image that
+// is supported. If it is supported, it will also return the name of the driver
+// being used.
+func (cd *cachedData) isSupported(id string) (bool, string) {
 	if cd.Valid {
-		if exists, suse := cd.idExists(id); exists {
-			return suse
+		if exists, driver := cd.idExists(id); exists {
+			return driver != otherKey, driver
 		}
 	}
 
-	suse := checkCommandInImage(id, "zypper")
 	if cd.Valid {
-		if suse {
-			cd.Suse = append(cd.Suse, id)
-		} else {
-			cd.Other = append(cd.Other, id)
+		for k, driver := range drivers.AvailableDrivers {
+			// TODO: hide output and improve it for debug mode
+			if checkCommandInImage(id, driver.Available()) {
+				cd.IDs[k] = append(cd.IDs[k], id)
+				return true, k
+			}
 		}
+		cd.IDs[otherKey] = append(cd.IDs[otherKey], id)
 	}
-	return suse
+	return false, ""
 }
 
 // Writes all the cached data back to the cache file. This is needed because
@@ -109,11 +120,13 @@ func (cd *cachedData) flush() {
 	oldCache := cd.readCache(file)
 
 	// Merge the old and "new" cache, and remove duplicates.
-	cd.Suse = append(cd.Suse, oldCache.Suse...)
-	cd.Other = append(cd.Other, oldCache.Other...)
+	for _, driver := range drivers.Available {
+		cd.IDs[driver] = append(cd.IDs[driver], oldCache.IDs[driver]...)
+		cd.IDs[driver] = utils.RemoveDuplicates(cd.IDs[driver])
+	}
+	cd.IDs[otherKey] = append(cd.IDs[otherKey], oldCache.IDs[otherKey]...)
+	cd.IDs[otherKey] = utils.RemoveDuplicates(cd.IDs[otherKey])
 	cd.Outdated = append(cd.Outdated, oldCache.Outdated...)
-	cd.Suse = utils.RemoveDuplicates(cd.Suse)
-	cd.Other = utils.RemoveDuplicates(cd.Other)
 	cd.Outdated = utils.RemoveDuplicates(cd.Outdated)
 
 	// Clear file content.
@@ -126,14 +139,15 @@ func (cd *cachedData) flush() {
 
 // Empty the contents of the cache file.
 func (cd *cachedData) reset() {
-	cd.Suse, cd.Other = []string{}, []string{}
+	cd.IDs = make(map[string][]string)
+	cd.Outdated = []string{}
 	cd.flush()
 }
 
 // Update the Cachefile after an update.
 // The ID of the outdated image will be added to outdated Images and
 // the ID of the new image will be added to the SUSE Images.
-func (cd *cachedData) updateCacheAfterUpdate(outdatedImg, updatedImgID string) error {
+func (cd *cachedData) updateCacheAfterUpdate(outdatedImg, updatedImgID, backend string) error {
 	outdatedImgID, err := getImageID(outdatedImg)
 	if err != nil {
 		return err
@@ -142,8 +156,8 @@ func (cd *cachedData) updateCacheAfterUpdate(outdatedImg, updatedImgID string) e
 		cd.Outdated = append(cd.Outdated, outdatedImgID)
 		cd.flush()
 	}
-	if !utils.ArrayIncludeString(cd.Suse, updatedImgID) {
-		cd.Suse = append(cd.Suse, updatedImgID)
+	if !utils.ArrayIncludeString(cd.IDs[backend], updatedImgID) {
+		cd.IDs[backend] = append(cd.IDs[backend], updatedImgID)
 		cd.flush()
 	}
 
@@ -193,7 +207,11 @@ func getCacheFile() *cachedData {
 		return &cachedData{Valid: false}
 	}
 
-	cd := &cachedData{Valid: true, Path: file.Name()}
+	cd := &cachedData{
+		Valid: true,
+		IDs:   make(map[string][]string),
+		Path:  file.Name(),
+	}
 	dec := json.NewDecoder(file)
 	err := dec.Decode(&cd)
 	_ = file.Close()

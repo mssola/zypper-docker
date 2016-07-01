@@ -33,8 +33,8 @@ func errorResponse(w http.ResponseWriter, code int, msg string) {
 	w.Write(js)
 }
 
-func parseOutput(output []byte) drivers.Updates {
-	up := drivers.Current().ParseUpdateOutput(output)
+func parseOutput(image string, output []byte) drivers.Updates {
+	up := backend.CurrentDriver(image).ParseUpdateOutput(output)
 	if up.Error != "" {
 		logger.Printf("could not parse output: %v", up.Error)
 		up.Error = "something went wrong"
@@ -57,7 +57,7 @@ func evaluateImage(w http.ResponseWriter, image string) {
 		logger.Printf("%v", res.Error)
 		errorResponse(w, http.StatusInternalServerError, "something went wrong...")
 	} else {
-		resp := parseOutput(res.Stdout)
+		resp := parseOutput(image, res.Stdout)
 
 		js, _ := json.Marshal(&resp)
 		w.Header().Set("Content-Type", "application/json")
